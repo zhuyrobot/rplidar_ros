@@ -38,6 +38,9 @@ namespace rp { namespace standalone{ namespace rplidar {
     class RPlidarDriverImplCommon : public RPlidarDriver
 {
 public:
+    enum {
+        RPLIDAR_TOF_MINUM_MAJOR_ID = 5,
+    };
 
     virtual bool isConnected();     
     virtual u_result reset(_u32 timeout = DEFAULT_TIMEOUT);
@@ -59,8 +62,10 @@ public:
 
     virtual u_result getHealth(rplidar_response_device_health_t & health, _u32 timeout = DEFAULT_TIMEOUT);
     virtual u_result getDeviceInfo(rplidar_response_device_info_t & info, _u32 timeout = DEFAULT_TIMEOUT);
+    virtual u_result checkIfTofLidar(bool & isTofLidar, _u32 timeout = DEFAULT_TIMEOUT);
     virtual u_result getSampleDuration_uS(rplidar_response_sample_rate_t & rateInfo, _u32 timeout = DEFAULT_TIMEOUT);
     virtual u_result setMotorPWM(_u16 pwm);
+    virtual u_result setLidarSpinSpeed(_u16 rpm, _u32 timeout = DEFAULT_TIMEOUT);
     virtual u_result startMotor();
     virtual u_result stopMotor();
     virtual u_result checkMotorCtrlSupport(bool & support, _u32 timeout = DEFAULT_TIMEOUT);
@@ -75,6 +80,8 @@ public:
     virtual u_result ascendScanData(rplidar_response_measurement_node_hq_t * nodebuffer, size_t count);
     virtual u_result getScanDataWithInterval(rplidar_response_measurement_node_t * nodebuffer, size_t & count);
     virtual u_result getScanDataWithIntervalHq(rplidar_response_measurement_node_hq_t * nodebuffer, size_t & count);
+    virtual u_result setRelateIp(const rplidar_payload_ip_set_related_t& output,_u32 timeout = DEFAULT_TIMEOUT);
+    virtual u_result cancelRelateIp(_u32 type,_u32 timeout = DEFAULT_TIMEOUT);
 
 protected:
 
@@ -102,7 +109,7 @@ protected:
     bool     _isConnected; 
     bool     _isScanning;
     bool     _isSupportingMotorCtrl;
-
+    bool     _isTofLidar;
     rplidar_response_measurement_node_hq_t   _cached_scan_node_hq_buf[8192];
     size_t                                   _cached_scan_node_hq_count;
 

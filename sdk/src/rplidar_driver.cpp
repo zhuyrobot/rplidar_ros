@@ -44,7 +44,7 @@
 #include "rplidar_driver_impl.h"
 #include "rplidar_driver_serial.h"
 #include "rplidar_driver_TCP.h"
-
+#include "rplidar_driver_UDP.h"
 #include <algorithm>
 
 #ifndef min
@@ -89,6 +89,8 @@ RPlidarDriver * RPlidarDriver::CreateDriver(_u32 drivertype)
         return new RPlidarDriverSerial();
     case DRIVER_TYPE_TCP:
          return new RPlidarDriverTCP();
+    case DRIVER_TYPE_UDP:
+        return new RPlidarDriverUDP();
     default:
         return NULL;
     }
@@ -131,7 +133,6 @@ u_result RPlidarDriverImplCommon::reset(_u32 timeout)
     }
     return RESULT_OK;
 }
-
 
 u_result RPlidarDriverImplCommon::clearNetSerialRxCache()
 {
@@ -237,7 +238,7 @@ u_result RPlidarDriverImplCommon::getDeviceInfo(rplidar_response_device_info_t &
     if (!isConnected()) return RESULT_OPERATION_FAIL;
 
     _disableDataGrabbing();
-
+    //delay(100);
     {
         rp::hal::AutoLocker l(_lock);
 
@@ -264,7 +265,18 @@ u_result RPlidarDriverImplCommon::getDeviceInfo(rplidar_response_device_info_t &
             return RESULT_OPERATION_TIMEOUT;
         }
         _chanDev->recvdata(reinterpret_cast<_u8 *>(&info), sizeof(info));
+        if ((info.model >> 4) > RPLIDAR_TOF_MINUM_MAJOR_ID){
+            _isTofLidar = true;
+        }else {
+            _isTofLidar = false;
+        }
     }
+    return RESULT_OK;
+}
+
+u_result RPlidarDriverImplCommon::checkIfTofLidar(bool & isTofLidar, _u32 timeout)
+{
+    isTofLidar = _isTofLidar;
     return RESULT_OK;
 }
 
@@ -1283,7 +1295,7 @@ u_result RPlidarDriverImplCommon::getLidarConf(_u32 type, std::vector<_u8> &outp
         if (IS_FAIL(ans = _sendCommand(RPLIDAR_CMD_GET_LIDAR_CONF, &query, sizeof(query)))) {
             return ans;
         }
-
+        delay(100);
         // waiting for confirmation
         rplidar_ans_header_t response_header;
         if (IS_FAIL(ans = _waitResponseHeader(&response_header, timeout))) {
@@ -1773,7 +1785,6 @@ u_result RPlidarDriverImplCommon::stop(_u32 timeout)
             return ans;
         }
     }
-
     return RESULT_OK;
 }
 
@@ -1862,18 +1873,53 @@ u_result RPlidarDriverImplCommon::getScanDataWithInterval(rplidar_response_measu
 u_result RPlidarDriverImplCommon::getScanDataWithIntervalHq(rplidar_response_measurement_node_hq_t * nodebuffer, size_t & count)
 {
     size_t size_to_copy = 0;
+    // Prevent crash in case lidar is not scanning - that way this function will leave nodebuffer untouched and set
+    // count to 0.
+    if (_isScanning)
     {
         rp::hal::AutoLocker l(_lock);
         if (_cached_scan_node_hq_count_for_interval_retrieve == 0)
         {
             return RESULT_OPERATION_TIMEOUT;
         }
-        //copy all the nodes(_cached_scan_node_count_for_interval_retrieve nodes) in _cached_scan_node_buf_for_interval_retrieve
-        size_to_copy = _cached_scan_node_hq_count_for_interval_retrieve;
+        // Copy at most count nodes from _cached_scan_node_buf_for_interval_retrieve
+        size_to_copy = min(_cached_scan_node_hq_count_for_interval_retrieve, count);
         memcpy(nodebuffer, _cached_scan_node_hq_buf_for_interval_retrieve, size_to_copy * sizeof(rplidar_response_measurement_node_hq_t));
-        _cached_scan_node_hq_count_for_interval_retrieve = 0;
+        _cached_scan_node_hq_count_for_interval_retrieve -= size_to_copy;
+        // Move remaining data to the start of the array.
+        memmove(&_cached_scan_node_hq_buf_for_interval_retrieve[0], &_cached_scan_node_hq_buf_for_interval_retrieve[size_to_copy], _cached_scan_node_hq_count_for_interval_retrieve *  sizeof(rplidar_response_measurement_node_hq_t));
     }
     count = size_to_copy;
+
+	// If there is remaining data, return with a warning.
+	if (_cached_scan_node_hq_count_for_interval_retrieve > 0)
+		return RESULT_REMAINING_DATA;
+    return RESULT_OK;
+}
+
+u_result RPlidarDriverImplCommon::setRelateIp(const rplidar_payload_ip_set_related_t& output, _u32 timeout)
+{
+    u_result ans;
+    std::vector<_u8> payload(sizeof(output));
+    memcpy(&payload[0], &output, sizeof(output));
+    {
+        rp::hal::AutoLocker l(_lock);
+        //if (IS_FAIL(ans = _sendCommand(RPLIDAR_CMD_SET_LIDAR_CONF, &payload[0], payload.size()))) {
+        if (IS_FAIL(ans = _sendCommand(RPLIDAR_CMD_SET_LIDAR_CONF, &output, sizeof(output)))) {
+            return ans;
+        }
+    }
+    return RESULT_OK;
+}
+
+u_result RPlidarDriverImplCommon::cancelRelateIp(_u32 type, _u32 timeout)
+{
+    u_result ans;
+
+    rp::hal::AutoLocker l(_lock);
+    if (IS_FAIL(ans = _sendCommand(RPLIDAR_CMD_SET_LIDAR_CONF, &type, sizeof(type)))) {
+        return ans;
+    }
 
     return RESULT_OK;
 }
@@ -2125,6 +2171,7 @@ u_result RPlidarDriverImplCommon::checkMotorCtrlSupport(bool & support, _u32 tim
 
 u_result RPlidarDriverImplCommon::setMotorPWM(_u16 pwm)
 {
+    if (_isTofLidar) return RESULT_OPERATION_NOT_SUPPORT;
     u_result ans;
     rplidar_payload_motor_pwm_t motor_pwm;
     motor_pwm.pwm_value = pwm;
@@ -2140,22 +2187,43 @@ u_result RPlidarDriverImplCommon::setMotorPWM(_u16 pwm)
     return RESULT_OK;
 }
 
+u_result RPlidarDriverImplCommon::setLidarSpinSpeed(_u16 rpm, _u32 timeout)
+{
+    if (!_isTofLidar) return RESULT_OPERATION_NOT_SUPPORT;
+
+    u_result ans;
+    rplidar_payload_hq_spd_ctrl_t speedReq;
+    speedReq.rpm = rpm;
+    if (IS_FAIL(ans = _sendCommand(RPLIDAR_CMD_HQ_MOTOR_SPEED_CTRL, (const _u8 *)&speedReq, sizeof(speedReq)))) {
+        return ans;
+    }
+    return RESULT_OK;
+}
+
 u_result RPlidarDriverImplCommon::startMotor()
 {
-    if (_isSupportingMotorCtrl) { // RPLIDAR A2
-        setMotorPWM(DEFAULT_MOTOR_PWM);
-        delay(500);
-        return RESULT_OK;
-    } else { // RPLIDAR A1
-        rp::hal::AutoLocker l(_lock);
-        _chanDev->clearDTR();
-        delay(500);
-        return RESULT_OK;
+    if (!_isTofLidar) {
+        if (_isSupportingMotorCtrl) { // RPLIDAR A2
+            setMotorPWM(DEFAULT_MOTOR_PWM);
+            delay(500);
+            return RESULT_OK;
+        }
+        else { // RPLIDAR A1
+            rp::hal::AutoLocker l(_lock);
+            _chanDev->clearDTR();
+            delay(500);
+            return RESULT_OK;
+        }
     }
+    else {
+        setLidarSpinSpeed(600);//set default rpm to tof lidar
+    }
+
 }
 
 u_result RPlidarDriverImplCommon::stopMotor()
 {
+    if(_isTofLidar) return RESULT_OK;
     if (_isSupportingMotorCtrl) { // RPLIDAR A2
         setMotorPWM(0);
         delay(500);
@@ -2259,5 +2327,45 @@ u_result RPlidarDriverTCP::connect(const char * ipStr, _u32 port, _u32 flag)
 
     return RESULT_OK;
 }
+RPlidarDriverUDP::RPlidarDriverUDP()
+{
+    _chanDev = new UDPChannelDevice();
+}
+
+RPlidarDriverUDP::~RPlidarDriverUDP()
+{
+    // force disconnection
+    disconnect();
+}
+
+void RPlidarDriverUDP::disconnect()
+{
+    if (!_isConnected) return;
+    stop();
+    _chanDev->close();
+}
+
+u_result RPlidarDriverUDP::connect(const char * ipStr, _u32 port, _u32 flag)
+{
+    if (isConnected()) return RESULT_ALREADY_DONE;
+
+    if (!_chanDev) return RESULT_INSUFFICIENT_MEMORY;
+
+    {
+        rp::hal::AutoLocker l(_lock);
+
+        // establish the serial connection...
+        if (!_chanDev->bind(ipStr, port))
+            return RESULT_INVALID_DATA;
+    }
+
+    _isConnected = true;
+
+    checkMotorCtrlSupport(_isSupportingMotorCtrl);
+    stopMotor();
+
+    return RESULT_OK;
+}
 
 }}}
+

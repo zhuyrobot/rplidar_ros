@@ -214,6 +214,9 @@ int main(int argc, char * argv[]) {
     if(channel_type == "tcp"){
         drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_TCP);
     }
+    else if(channel_type == "udp"){
+        drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_UDP);
+    }
     else{
         drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
     }
@@ -232,6 +235,14 @@ int main(int argc, char * argv[]) {
             return -1;
         }
 
+    }
+    else if(channel_type == "udp"){
+             // make connection...
+        if (IS_FAIL(drv->connect(tcp_ip.c_str(), (_u32)tcp_port))) {
+            ROS_ERROR("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
+            RPlidarDriver::DisposeDriver(drv);
+            return -1;
+        }
     }
     else{
        // make connection...
@@ -307,7 +318,7 @@ int main(int argc, char * argv[]) {
     ros::Time end_scan_time;
     double scan_duration;
     while (ros::ok()) {
-        rplidar_response_measurement_node_hq_t nodes[360*8];
+        rplidar_response_measurement_node_hq_t nodes[360*12];
         size_t   count = _countof(nodes);
 
         start_scan_time = ros::Time::now();
@@ -381,8 +392,8 @@ int main(int argc, char * argv[]) {
     }
 
     // done!
-    drv->stop();
     drv->stopMotor();
+    drv->stop();
     RPlidarDriver::DisposeDriver(drv);
     return 0;
 }

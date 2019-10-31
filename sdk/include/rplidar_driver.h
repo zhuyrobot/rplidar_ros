@@ -63,6 +63,7 @@ struct RplidarScanMode {
 enum {
     DRIVER_TYPE_SERIALPORT = 0x0,
     DRIVER_TYPE_TCP = 0x1,
+    DRIVER_TYPE_UDP = 0x2,
 };
 
 class ChannelDevice
@@ -177,10 +178,15 @@ public:
     /// \param timeout       The operation timeout value (in millisecond) for the serial port communication
     DEPRECATED(virtual u_result getSampleDuration_uS(rplidar_response_sample_rate_t & rateInfo, _u32 timeout = DEFAULT_TIMEOUT)) = 0;
     
-    /// Set the RPLIDAR's motor pwm when using accessory board, currently valid for A2 only.
+    /// Set the RPLIDAR's motor pwm when using accessory board, currently valid for A2 and A3 only.
     /// 
     /// \param pwm           The motor pwm value would like to set 
     virtual u_result setMotorPWM(_u16 pwm) = 0;
+
+    /// Set the RPLIDAR's motor rpm, currently valid for tof lidar only.
+    /// 
+    /// \param rpm           The motor rpm value would like to set 
+    virtual u_result setLidarSpinSpeed(_u16 rpm, _u32 timeout = DEFAULT_TIMEOUT) = 0;
 
     /// Start RPLIDAR's motor when using accessory board
     virtual u_result startMotor() = 0;
@@ -194,6 +200,13 @@ public:
     /// \param support       Return the result.
     /// \param timeout       The operation timeout value (in millisecond) for the serial port communication. 
     virtual u_result checkMotorCtrlSupport(bool & support, _u32 timeout = DEFAULT_TIMEOUT) = 0;
+
+    /// Check if the device is Tof lidar.
+    /// Note: this API is effective if and only if getDeviceInfo has been called.
+    /// 
+    /// \param support       Return the result.
+    /// \param timeout       The operation timeout value (in millisecond) for the serial port communication. 
+    virtual u_result checkIfTofLidar(bool & isTofLidar, _u32 timeout = DEFAULT_TIMEOUT) = 0;
 
     /// Calculate RPLIDAR's current scanning frequency from the given scan data
     /// DEPRECATED, please use getFrequency(RplidarScanMode, size_t)
@@ -302,15 +315,20 @@ public:
     /// The interface will return RESULT_OPERATION_TIMEOUT to indicate that not even a single node can be retrieved since last call. 
     DEPRECATED(virtual u_result getScanDataWithInterval(rplidar_response_measurement_node_t * nodebuffer, size_t & count)) = 0;
 
-    /// Return received scan points even if it's not complete scan
+    /// Return received scan points even if it's not complete scan.
     ///
-    /// \param nodebuffer     Buffer provided by the caller application to store the scan data
+    /// \param nodebuffer     Buffer provided by the caller application to store the scan data. This buffer must be initialized by
+    ///                       the caller.
     ///
-    /// \param count          Once the interface returns, this parameter will store the actual received data count.
+    /// \param count          The caller must initialize this parameter to set the max data count of the provided buffer (in unit of rplidar_response_measurement_node_t).
+    ///                       Once the interface returns, this parameter will store the actual received data count.
     ///
-    /// The interface will return RESULT_OPERATION_TIMEOUT to indicate that not even a single node can be retrieved since last call. 
+    /// The interface will return RESULT_OPERATION_TIMEOUT to indicate that not even a single node can be retrieved since last call.
+    /// The interface will return RESULT_REMAINING_DATA to indicate that the given buffer is full, but that there remains data to be read.
     virtual u_result getScanDataWithIntervalHq(rplidar_response_measurement_node_hq_t * nodebuffer, size_t & count) = 0;
 
+    virtual u_result setRelateIp(const rplidar_payload_ip_set_related_t& output, _u32 timeout = DEFAULT_TIMEOUT) = 0;
+    virtual u_result cancelRelateIp(_u32 type, _u32 timeout = DEFAULT_TIMEOUT) = 0;
     virtual ~RPlidarDriver() {}
 protected:
     RPlidarDriver(){}

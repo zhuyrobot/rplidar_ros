@@ -109,6 +109,10 @@ typedef struct _rplidar_payload_acc_board_flag_t {
     _u32 reserved;
 } __attribute__((packed)) rplidar_payload_acc_board_flag_t;
 
+typedef struct _rplidar_payload_hq_spd_ctrl_t {
+    _u16  rpm;
+} __attribute__((packed)) rplidar_payload_hq_spd_ctrl_t;
+
 // Response
 // ------------------------------------------
 #define RPLIDAR_ANS_TYPE_DEVINFO          0x4
@@ -272,6 +276,13 @@ typedef struct _rplidar_response_device_health_t {
     _u8   status;
     _u16  error_code;
 } __attribute__((packed)) rplidar_response_device_health_t;
+
+typedef struct _rplidar_payload_ip_set_related_t {
+    _u32 type;
+    _u8 ip_addr[4];
+    _u8 net_mask[4];
+    _u8 gw[4];
+}__attribute__((packed)) rplidar_payload_ip_set_related_t;
 
 // Definition of the variable bit scale encoding mechanism
 #define RPLIDAR_VARBITSCALE_X2_SRC_BIT  9
