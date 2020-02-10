@@ -104,7 +104,7 @@ void publish_scan(ros::Publisher *pub,
     pub->publish(scan_msg);
 }
 
-bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
+bool getRPLIDARDeviceInfo(RPlidarDriver * drv,std::string detect_mode)
 {
     u_result     op_result;
     rplidar_response_device_info_t devinfo;
@@ -112,9 +112,9 @@ bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
     op_result = drv->getDeviceInfo(devinfo);
     if (IS_FAIL(op_result)) {
         if (op_result == RESULT_OPERATION_TIMEOUT) {
-            ROS_ERROR("Error, operation time out. RESULT_OPERATION_TIMEOUT! ");
+            ROS_ERROR("[getDeviceInfo] Error, operation time out. RESULT_OPERATION_TIMEOUT! ");
         } else {
-            ROS_ERROR("Error, unexpected error, code: %x",op_result);
+            ROS_ERROR("[getDeviceInfo] Error, unexpected error, code: %x",op_result);
         }
         return false;
     }
@@ -125,8 +125,55 @@ bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
         printf("%02X", devinfo.serialnum[pos]);
     }
     printf("\n");
+
+#define RPLIDAR_T_SERIES_MINUM_MAJOR_ID 8
+    if( (devinfo.model >>4) > RPLIDAR_T_SERIES_MINUM_MAJOR_ID ){
+        //get dev mac
+        rplidar_response_device_macaddr_info_t devMac;
+        op_result = drv->getDeviceMacAddr(devMac.macaddr);
+        if (IS_FAIL(op_result)) {
+            if (op_result == RESULT_OPERATION_TIMEOUT) {
+                ROS_ERROR("[getDeviceMacAddr] Error, operation time out. RESULT_OPERATION_TIMEOUT! ");
+            } else {
+                ROS_ERROR("[getDeviceMacAddr] Error, unexpected error, code: %x",op_result);
+            }
+            return false;
+        }
+        printf("RPLIDAR MAC: ");
+        for (int pos = 0; pos < 5 ;++pos) {
+            printf("%02X:", devMac.macaddr[pos]);
+        }
+        printf("%02X", devMac.macaddr[5]);
+        printf("\n");
+        
+        //set detect mode,only for T serials
+        rplidar_device_detect_mode_t mode;
+        if(detect_mode == "Anti"){
+            mode.detect_mode_type = RPLIDAR_DETECT_MODE_ANTI;
+        }
+        else {
+            mode.detect_mode_type = RPLIDAR_DETECT_MODE_ENHANCE;
+        }
+        drv->setLidarDetectMode(mode);
+
+        rplidar_device_detect_mode_t mode_sel;
+        drv->getLidarDetectMode(mode_sel);
+        if(mode.detect_mode_type == mode_sel.detect_mode_type){
+           if(mode.detect_mode_type == RPLIDAR_DETECT_MODE_ANTI)
+               ROS_INFO("Detect Mode: %s","Anti");
+           else 
+               ROS_INFO("Detect Mode: %s","Enhance");
+        }
+        else{
+            ROS_ERROR("[setLidarDetectMode] Error, failed to setLidarDetectMode");
+            return false;
+        }
+
+    }
+
     ROS_INFO("Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
     ROS_INFO("Hardware Rev: %d",(int)devinfo.hardware_version);
+
     return true;
 }
 
@@ -134,6 +181,7 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
 {
     u_result     op_result;
     rplidar_response_device_health_t healthinfo;
+
     op_result = drv->getHealth(healthinfo);
     if (IS_OK(op_result)) { 
         ROS_INFO("RPLidar health status : %d", healthinfo.status);
@@ -157,6 +205,7 @@ bool stop_motor(std_srvs::Empty::Request &req,
        return false;
 
   ROS_DEBUG("Stop motor");
+  drv->stop();
   drv->stopMotor();
   return true;
 }
@@ -166,14 +215,9 @@ bool start_motor(std_srvs::Empty::Request &req,
 {
   if(!drv)
        return false;
-  if(drv->isConnected())
-  {
-      ROS_DEBUG("Start motor");
-      u_result ans=drv->startMotor();
-  
-      ans=drv->startScan(0,1);
-   }
-   else ROS_INFO("lost connection");
+  ROS_DEBUG("Start motor");
+  drv->startMotor();
+  drv->startScan(0,1);
   return true;
 }
 
@@ -195,6 +239,7 @@ int main(int argc, char * argv[]) {
     bool angle_compensate = true;
     float max_distance = 8.0;
     int angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
+    std::string detect_mode = "NonSupport";
     std::string scan_mode;
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
@@ -208,6 +253,7 @@ int main(int argc, char * argv[]) {
     nh_private.param<bool>("inverted", inverted, false);
     nh_private.param<bool>("angle_compensate", angle_compensate, false);
     nh_private.param<std::string>("scan_mode", scan_mode, std::string());
+    nh_private.param<std::string>("detect_mode", detect_mode, std::string());
 
     ROS_INFO("RPLIDAR running on ROS package rplidar_ros. SDK Version:"RPLIDAR_SDK_VERSION"");
 
@@ -216,6 +262,9 @@ int main(int argc, char * argv[]) {
     // create the driver instance
     if(channel_type == "tcp"){
         drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_TCP);
+    }
+    else if(channel_type == "udp"){
+        drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_UDP);
     }
     else{
         drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
@@ -236,6 +285,14 @@ int main(int argc, char * argv[]) {
         }
 
     }
+    else if(channel_type == "udp"){
+             // make connection...
+        if (IS_FAIL(drv->connect(tcp_ip.c_str(), (_u32)tcp_port))) {
+            ROS_ERROR("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
+            RPlidarDriver::DisposeDriver(drv);
+            return -1;
+        }
+    }
     else{
        // make connection...
         if (IS_FAIL(drv->connect(serial_port.c_str(), (_u32)serial_baudrate))) {
@@ -245,9 +302,9 @@ int main(int argc, char * argv[]) {
         }
 
     }
-    
+
     // get rplidar device info
-    if (!getRPLIDARDeviceInfo(drv)) {
+    if (!getRPLIDARDeviceInfo(drv,detect_mode)) {
         return -1;
     }
 
@@ -256,6 +313,7 @@ int main(int argc, char * argv[]) {
         RPlidarDriver::DisposeDriver(drv);
         return -1;
     }
+    
 
     ros::ServiceServer stop_motor_service = nh.advertiseService("stop_motor", stop_motor);
     ros::ServiceServer start_motor_service = nh.advertiseService("start_motor", start_motor);
@@ -310,7 +368,7 @@ int main(int argc, char * argv[]) {
     ros::Time end_scan_time;
     double scan_duration;
     while (ros::ok()) {
-        rplidar_response_measurement_node_hq_t nodes[360*8];
+        rplidar_response_measurement_node_hq_t nodes[360*12];
         size_t   count = _countof(nodes);
 
         start_scan_time = ros::Time::now();
@@ -372,6 +430,7 @@ int main(int argc, char * argv[]) {
                 // All the data is invalid, just publish them
                 float angle_min = DEG2RAD(0.0f);
                 float angle_max = DEG2RAD(359.0f);
+
                 publish_scan(&scan_pub, nodes, count,
                              start_scan_time, scan_duration, inverted,
                              angle_min, angle_max, max_distance,
