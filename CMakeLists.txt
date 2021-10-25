@@ -20,11 +20,19 @@ endif()
 
 set(RPLIDAR_SDK_PATH "./sdk/")
 
+if(WIN32)
+FILE(GLOB RPLIDAR_SDK_SRC 
+  "${RPLIDAR_SDK_PATH}/src/arch/win32/*.cpp"
+  "${RPLIDAR_SDK_PATH}/src/hal/*.cpp"
+  "${RPLIDAR_SDK_PATH}/src/*.cpp"
+)
+else()
 FILE(GLOB RPLIDAR_SDK_SRC 
   "${RPLIDAR_SDK_PATH}/src/arch/linux/*.cpp"
   "${RPLIDAR_SDK_PATH}/src/hal/*.cpp"
   "${RPLIDAR_SDK_PATH}/src/*.cpp"
 )
+endif(WIN32)
 
 ################################################################################
 # Find ament packages and libraries for ament and system dependencies
