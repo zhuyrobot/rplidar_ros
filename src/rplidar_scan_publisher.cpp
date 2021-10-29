@@ -56,8 +56,6 @@ class RPLidarScanPublisher : public rclcpp::Node
 {
 public:
 	RPLidarScanPublisher() : Node("rplidar_scan_publisher") {}
-
-private:
 	rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::QoS(rclcpp::SensorDataQoS()));
 	rclcpp::Service<std_srvs::srv::Empty>::SharedPtr start_motor_service = this->create_service<std_srvs::srv::Empty>("stop_motor",
 		[this](const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)->void
@@ -78,19 +76,19 @@ private:
 			else RCLCPP_INFO(this->get_logger(), "Done: startScan");
 		});
 
-	RPlidarDriver* drv;
-	string channel_type;
-	string tcp_ip;
-	string serial_port;
-	int tcp_port = 20108;
-	int serial_baudrate = 115200;
-	string frame_id = "laser_frame";
-	string scan_mode;
-	bool inverted = false;
-	bool angle_compensate = true;
-	float max_distance = 8.0;//not be declared.
-	size_t angle_compensate_multiple = 1;//not be declared. it stand of angle compensate at per 1 degree
+	string channel_type = this->declare_parameter("channel_type", "serial");
+	string serial_port = this->declare_parameter("serial_port", "/dev/ttyUSB0");
+	int serial_baudrate = this->declare_parameter("serial_baudrate", 115200/*256000*/);//ros run for A1 A2, change to 256000 if A3
+	string tcp_ip = this->declare_parameter("tcp_ip", "192.168.0.7");
+	int tcp_port = this->declare_parameter("tcp_port", 20108);
+	string frame_id = this->declare_parameter("frame_id", "laser");
+	string scan_mode = this->declare_parameter("scan_mode", "");
+	bool inverted = this->declare_parameter("inverted", false);
+	bool angle_compensate = this->declare_parameter("angle_compensate", true);
+	float max_distance = 8.0;
+	size_t angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
 	u_result ret;
+	RPlidarDriver* drv;
 
 private:
 	static float getAngle(const rplidar_response_measurement_node_hq_t& node) { return node.angle_z_q14 * 90.f / 16384.f; }
@@ -135,31 +133,8 @@ private:
 public:
 	int work_loop()
 	{
-		//0.InitParam
-		{
-			this->declare_parameter("channel_type");
-			this->declare_parameter("tcp_ip");
-			this->declare_parameter("tcp_port");
-			this->declare_parameter("serial_port");
-			this->declare_parameter("serial_baudrate");
-			this->declare_parameter("frame_id");
-			this->declare_parameter("scan_mode");
-			this->declare_parameter("inverted");
-			this->declare_parameter("angle_compensate");
-
-			this->get_parameter_or<string>("channel_type", channel_type, "serial");
-			this->get_parameter_or<string>("tcp_ip", tcp_ip, "192.168.0.7");
-			this->get_parameter_or<int>("tcp_port", tcp_port, 20108);
-			this->get_parameter_or<string>("serial_port", serial_port, "/dev/ttyUSB0");
-			this->get_parameter_or<int>("serial_baudrate", serial_baudrate, 115200/*256000*/);//ros run for A1 A2, change to 256000 if A3
-			this->get_parameter_or<string>("frame_id", frame_id, "laser_frame");
-			this->get_parameter_or<bool>("inverted", inverted, false);
-			this->get_parameter_or<bool>("angle_compensate", angle_compensate, false);
-			this->get_parameter_or<string>("scan_mode", scan_mode, string());
-		}
-		RCLCPP_INFO(this->get_logger(), "ROS2 SDK Version:" ROS2VERSION ", RPLIDAR SDK Version:" RPLIDAR_SDK_VERSION "");
-
 		//1.CreateDriver
+		RCLCPP_INFO(this->get_logger(), "ROS2 SDK Version:" ROS2VERSION ", RPLIDAR SDK Version:" RPLIDAR_SDK_VERSION "");
 		if (channel_type == "tcp") drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_TCP);
 		else drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
 		if (!drv) { RCLCPP_ERROR(this->get_logger(), "Failed: create driver"); return -2; }
@@ -193,7 +168,6 @@ public:
 		rplidar_response_device_health_t device_health;
 		if (IS_FAIL(ret = drv->getHealth(device_health))) { RCLCPP_ERROR(this->get_logger(), "Failed: getHealth and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else RCLCPP_INFO(this->get_logger(), "RPLidarHealthStatus : %d", device_health.status);
-		return true;
 
 		//5.StartMotor
 		if (IS_FAIL(ret = drv->startMotor())) { RCLCPP_ERROR(this->get_logger(), "Failed: startMotor"); RPlidarDriver::DisposeDriver(drv); return -1; }
@@ -269,24 +243,23 @@ public:
 			//7.4 CompensateScan
 			else
 			{
-				const int angle_compensate_nodes_count = 360 * angle_compensate_multiple;
-				vector<rplidar_response_measurement_node_hq_t> angle_compensate_nodes(angle_compensate_nodes_count);
-				memset(angle_compensate_nodes.data(), 0, angle_compensate_nodes_count * sizeof(rplidar_response_measurement_node_hq_t));
+				vector<rplidar_response_measurement_node_hq_t> meas_nodes_with_compensation(360 * angle_compensate_multiple);
+				memset(meas_nodes_with_compensation.data(), 0, meas_nodes_with_compensation.size() * sizeof(meas_nodes_with_compensation[0]));
 
 				for (size_t i = 0, angle_compensate_offset = 0; i < count; ++i)
 					if (meas_nodes[i].dist_mm_q2 != 0)
 					{
 						float angle = getAngle(meas_nodes[i]);
 						int angle_value = int(angle * angle_compensate_multiple);
-						if ((angle_value - angle_compensate_offset) < 0) angle_compensate_offset = angle_value;
+						if (angle_value - angle_compensate_offset < 0) angle_compensate_offset = angle_value;
 						for (size_t j = 0; j < angle_compensate_multiple; ++j)
 						{
 							int angle_compensate_nodes_index = angle_value - angle_compensate_offset + j;
-							if (angle_compensate_nodes_index >= angle_compensate_nodes_count) angle_compensate_nodes_index = angle_compensate_nodes_count - 1;
-							angle_compensate_nodes[angle_compensate_nodes_index] = meas_nodes[i];
+							if (angle_compensate_nodes_index >= meas_nodes_with_compensation.size()) angle_compensate_nodes_index = meas_nodes_with_compensation.size() - 1;
+							meas_nodes_with_compensation[angle_compensate_nodes_index] = meas_nodes[i];
 						}
 					}
-				publish_scan(scan_pub, angle_compensate_nodes.data(), angle_compensate_nodes.size(), start_scan_time, scan_duration, inverted, 0.f, 359.f, max_distance, frame_id);
+				publish_scan(scan_pub, meas_nodes_with_compensation.data(), meas_nodes_with_compensation.size(), start_scan_time, scan_duration, inverted, 0.f, 359.f, max_distance, frame_id);
 			}
 		}
 
