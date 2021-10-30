@@ -114,7 +114,7 @@ private:
 		scan_msg->angle_max = M_PI - (reversed ? angle_min : angle_max);
 		scan_msg->angle_increment = (scan_msg->angle_max - scan_msg->angle_min) / (node_count - 1);
 
-		///3.
+		//3.
 		scan_msg->range_min = 0.15;
 		scan_msg->range_max = range_max;
 		scan_msg->ranges.resize(node_count);
@@ -210,28 +210,29 @@ public:
 				(1000 / acutal_scan_mode.us_per_sample), angle_compensate_multiple);
 		}
 
-		//7.
+		//7.SpinROS
 		while (rclcpp::ok() && !need_exit)
 		{
 			rclcpp::spin_some(shared_from_this());
+
 			//7.1 GrabScan
-			size_t count = 360 * 8;
-			vector<rplidar_response_measurement_node_hq_t> meas_nodes(count);
+			size_t meas_count = 360 * 8;
+			vector<rplidar_response_measurement_node_hq_t> meas_nodes(meas_count);
 			rclcpp::Time start_scan_time = this->now();
-			ret = drv->grabScanDataHq(meas_nodes.data(), count);
+			ret = drv->grabScanDataHq(meas_nodes.data(), meas_count);
 			rclcpp::Time end_scan_time = this->now();
 			double scan_duration = (end_scan_time - start_scan_time).seconds();
 			if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: grabScanDataHq and ret=%x", ret); continue; }
 
 			//7.2 SortScan
-			ret = drv->ascendScanData(meas_nodes.data(), count);
+			ret = drv->ascendScanData(meas_nodes.data(), meas_count);
 			if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: ascendScanData and ret=%x", ret); continue; }
 
 			//7.3 RawScan
 			if (!angle_compensate)
 			{
 				int first_node = -1;
-				int final_node = count;
+				int final_node = meas_count;
 				while (meas_nodes[++first_node].dist_mm_q2 == 0);//First valid node
 				while (meas_nodes[--final_node].dist_mm_q2 == 0);//Final valid node
 				float angle_min = DEG2RAD(getAngle(meas_nodes[first_node]));
@@ -246,15 +247,14 @@ public:
 				vector<rplidar_response_measurement_node_hq_t> meas_nodes_with_compensation(360 * angle_compensate_multiple);
 				memset(meas_nodes_with_compensation.data(), 0, meas_nodes_with_compensation.size() * sizeof(meas_nodes_with_compensation[0]));
 
-				for (size_t i = 0, angle_compensate_offset = 0; i < count; ++i)
+				for (size_t i = 0, offset = 0; i < meas_count; ++i)
 					if (meas_nodes[i].dist_mm_q2 != 0)
 					{
-						float angle = getAngle(meas_nodes[i]);
-						int angle_value = int(angle * angle_compensate_multiple);
-						if (angle_value - angle_compensate_offset < 0) angle_compensate_offset = angle_value;
+						int angle_value = int(getAngle(meas_nodes[i]) * angle_compensate_multiple);
+						if (offset > angle_value) offset = angle_value;
 						for (size_t j = 0; j < angle_compensate_multiple; ++j)
 						{
-							int angle_compensate_nodes_index = angle_value - angle_compensate_offset + j;
+							int angle_compensate_nodes_index = angle_value - offset + j;
 							if (angle_compensate_nodes_index >= meas_nodes_with_compensation.size()) angle_compensate_nodes_index = meas_nodes_with_compensation.size() - 1;
 							meas_nodes_with_compensation[angle_compensate_nodes_index] = meas_nodes[i];
 						}
