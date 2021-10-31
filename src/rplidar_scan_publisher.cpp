@@ -188,7 +188,7 @@ public:
 				for (int k = 0; k < all_scan_modes.size(); ++k) if (all_scan_modes[k].scan_mode == scan_mode) { scan_id = all_scan_modes[k].id; break; }
 				if (scan_id == -1)
 				{
-					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode);
+					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode.c_str());
 					for (int k = 0; k < all_scan_modes.size(); ++k)
 						RCLCPP_ERROR(this->get_logger(), "ScanMode: %s(max_distance=%.1fm PointNumber=%.1fK)",
 							all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance,
@@ -246,7 +246,7 @@ public:
 					for (int k = first_node; k < final_node; ++k)
 						strdat += fmt::format("\t({}, {})\n", DEG2RAD(getAngle(meas_nodes[k])), meas_nodes[k].dist_mm_q2 * 0.00025);
 					RCLCPP_INFO(this->get_logger(), "RawScan: meas_count=%d, actu_count=%d, angle_min=%f, angle_max=%f, data=%s\n",
-						int(meas_nodes.size()), final_node - first_node + 1, angle_min, angle_max, strdat);
+						int(meas_nodes.size()), final_node - first_node + 1, angle_min, angle_max, strdat.c_str());
 				}
 			}
 
@@ -275,7 +275,7 @@ public:
 					string strdat;
 					for (int k = 0; k < meas_nodes_with_compensation.size(); ++k)
 						strdat += fmt::format("\t({}, {})\n", DEG2RAD(getAngle(meas_nodes_with_compensation[k])), meas_nodes_with_compensation[k].dist_mm_q2 * 0.00025);
-					RCLCPP_INFO(this->get_logger(), "CompScan: meas_count=%d, data=%s\n", int(meas_nodes_with_compensation.size()), strdat);
+					RCLCPP_INFO(this->get_logger(), "CompScan: meas_count=%d, data=%s\n", int(meas_nodes_with_compensation.size()), strdat.c_str());
 				}
 			}
 		}
