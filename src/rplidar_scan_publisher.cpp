@@ -143,8 +143,8 @@ public:
 		//2.ConnectLidar
 		if (channel_type == "tcp") ret = drv->connect(tcp_ip.c_str(), uint32_t(tcp_port));
 		else ret = drv->connect(serial_port.c_str(), uint32_t(serial_baudrate));
-		char connstr[127]; sprintf(connstr, "connect %s with %d", tcp_ip.c_str(), tcp_port);
-		if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: %s and ret=%d", connstr, ret); RPlidarDriver::DisposeDriver(drv); return -1; }
+		char connstr[127]; sprintf(connstr, "connect %s with %d", (channel_type == "tcp" ? tcp_ip : serial_port).c_str(), channel_type == "tcp" ? tcp_port : serial_baudrate);
+		if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: %s and ret=%x", connstr, ret); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else RCLCPP_INFO(this->get_logger(), "Done: %s", connstr);
 
 		//3.GetDeviceInfo
@@ -159,7 +159,7 @@ public:
 				sprintf(sn, "%02X", device_info.serialnum[pos]);
 				sn_str += string(sn, sn + 2);
 			}
-			RCLCPP_INFO(this->get_logger(), "RPLidarSN: %s", sn_str.c_str());
+			RCLCPP_INFO(this->get_logger(), "RPLidarSN: %s", sn_str);
 			RCLCPP_INFO(this->get_logger(), "FirmwareVer: %d.%02d", device_info.firmware_version >> 8, device_info.firmware_version & 0xFF);
 			RCLCPP_INFO(this->get_logger(), "HardwareRev: %d", int(device_info.hardware_version));
 		}
@@ -187,7 +187,7 @@ public:
 				for (int k = 0; k < all_scan_modes.size(); ++k) if (all_scan_modes[k].scan_mode == scan_mode) { scan_id = all_scan_modes[k].id; break; }
 				if (scan_id == -1)
 				{
-					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode.c_str());
+					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode);
 					for (int k = 0; k < all_scan_modes.size(); ++k)
 						RCLCPP_ERROR(this->get_logger(), "ScanMode: %s(max_distance=%.1fm PointNumber=%.1fK)",
 							all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance,
