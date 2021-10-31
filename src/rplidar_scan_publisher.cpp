@@ -38,6 +38,7 @@
 #include "rplidar.h"
 
 #include <signal.h>
+#include <spdlog/spdlog.h>
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -229,7 +230,7 @@ public:
 			if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: ascendScanData and ret=%x", ret); continue; }
 
 			//7.3 RawScan
-			if (!angle_compensate)
+			//if (!angle_compensate)
 			{
 				int first_node = -1;
 				int final_node = meas_count;
@@ -239,10 +240,19 @@ public:
 				float angle_max = DEG2RAD(getAngle(meas_nodes[final_node]));
 
 				publish_scan(scan_pub, meas_nodes.data() + first_node, final_node - first_node + 1, start_scan_time, scan_duration, inverted, angle_min, angle_max, max_distance, frame_id);
+				if (1)
+				{
+					string strdat;
+					for (int k = first_node; k < final_node; ++k)
+						strdat += fmt::format("\t({}, {})\n", DEG2RAD(getAngle(meas_nodes[k])), meas_nodes[k].dist_mm_q2 * 0.00025);
+					RCLCPP_INFO(this->get_logger(), "RawScan: meas_count=%d, actu_count=%d, angle_min=%f, angle_max=%f, data=%s\n",
+						int(meas_nodes.size()), final_node - first_node + 1, angle_min, angle_max, strdat);
+				}
 			}
 
 			//7.4 CompensateScan
-			else
+			//else
+			this_thread::sleep_for(100ms);
 			{
 				vector<rplidar_response_measurement_node_hq_t> meas_nodes_with_compensation(360 * angle_compensate_multiple);
 				memset(meas_nodes_with_compensation.data(), 0, meas_nodes_with_compensation.size() * sizeof(meas_nodes_with_compensation[0]));
@@ -260,6 +270,13 @@ public:
 						}
 					}
 				publish_scan(scan_pub, meas_nodes_with_compensation.data(), meas_nodes_with_compensation.size(), start_scan_time, scan_duration, inverted, 0.f, 359.f, max_distance, frame_id);
+				if (1)
+				{
+					string strdat;
+					for (int k = 0; k < meas_nodes_with_compensation.size(); ++k)
+						strdat += fmt::format("\t({}, {})\n", DEG2RAD(getAngle(meas_nodes_with_compensation[k])), meas_nodes_with_compensation[k].dist_mm_q2 * 0.00025);
+					RCLCPP_INFO(this->get_logger(), "CompScan: meas_count=%d, data=%s\n", int(meas_nodes_with_compensation.size()), strdat);
+				}
 			}
 		}
 
