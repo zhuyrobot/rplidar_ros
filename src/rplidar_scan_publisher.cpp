@@ -187,7 +187,7 @@ public:
 				for (int k = 0; k < all_scan_modes.size(); ++k) if (all_scan_modes[k].scan_mode == scan_mode) { scan_id = all_scan_modes[k].id; break; }
 				if (scan_id == -1)
 				{
-					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode);
+					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode.c_str());
 					for (int k = 0; k < all_scan_modes.size(); ++k)
 						RCLCPP_ERROR(this->get_logger(), "ScanMode: %s(max_distance=%.1fm PointNumber=%.1fK)",
 							all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance,
