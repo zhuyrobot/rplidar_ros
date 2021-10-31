@@ -244,7 +244,7 @@ public:
 				{
 					string strdat;
 					for (int k = first_node; k < final_node; ++k)
-						strdat += fmt::format("\t({}, {})\n", DEG2RAD(getAngle(meas_nodes[k])), meas_nodes[k].dist_mm_q2 * 0.00025);
+						strdat += fmt::format("\t{}: ({}, {})\n", k, getAngle(meas_nodes[k]), meas_nodes[k].dist_mm_q2 * 0.00025);
 					RCLCPP_INFO(this->get_logger(), "RawScan: meas_count=%d, actu_count=%d, angle_min=%f, angle_max=%f, data=%s\n",
 						int(meas_nodes.size()), final_node - first_node + 1, angle_min, angle_max, strdat.c_str());
 				}
@@ -274,7 +274,7 @@ public:
 				{
 					string strdat;
 					for (int k = 0; k < meas_nodes_with_compensation.size(); ++k)
-						strdat += fmt::format("\t({}, {})\n", DEG2RAD(getAngle(meas_nodes_with_compensation[k])), meas_nodes_with_compensation[k].dist_mm_q2 * 0.00025);
+						strdat += fmt::format("\t{}: ({}, {})\n", k, getAngle(meas_nodes_with_compensation[k]), meas_nodes_with_compensation[k].dist_mm_q2 * 0.00025);
 					RCLCPP_INFO(this->get_logger(), "CompScan: meas_count=%d, data=%s\n", int(meas_nodes_with_compensation.size()), strdat.c_str());
 				}
 			}
