@@ -87,7 +87,9 @@ public:
 	bool inverted = this->declare_parameter("inverted", false);
 	bool angle_compensate = this->declare_parameter("angle_compensate", true);
 	float max_distance = 8.0;
-	size_t angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
+	size_t npoint_per_degree = 1;//it stand of angle compensate at per 1 degree
+	RPlidarDriver* drv;
+	u_result ret;
 
 private:
 	static float getAngle(const rplidar_response_measurement_node_hq_t& node) { return node.angle_z_q14 * 90.f / 16384.f; }
@@ -133,7 +135,6 @@ public:
 	int work_loop()
 	{
 		//1.CreateDriver
-		RPlidarDriver* drv;
 		RCLCPP_INFO(this->get_logger(), "ROS2 SDK Version:" ROS2VERSION ", RPLIDAR SDK Version:" RPLIDAR_SDK_VERSION "");
 		if (channel_type == "tcp") drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_TCP);
 		else drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
@@ -141,7 +142,6 @@ public:
 		else RCLCPP_INFO(this->get_logger(), "Done: create driver");
 
 		//2.ConnectLidar
-		u_result ret;
 		if (channel_type == "tcp") ret = drv->connect(tcp_ip.c_str(), uint32_t(tcp_port));
 		else ret = drv->connect(serial_port.c_str(), uint32_t(serial_baudrate));
 		string connstr = fmt::format("connect {} with {}", channel_type == "tcp" ? tcp_ip : serial_port, channel_type == "tcp" ? tcp_port : serial_baudrate);
@@ -168,7 +168,7 @@ public:
 		vector<RplidarScanMode> all_scan_modes;
 		if (IS_FAIL(drv->getAllSupportedScanModes(all_scan_modes))) { RCLCPP_ERROR(this->get_logger(), "Failed: getAllSupportedScanModes and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else for (int k = 0; k < all_scan_modes.size(); ++k)
-			RCLCPP_ERROR(this->get_logger(), "SupportScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f",
+			RCLCPP_INFO(this->get_logger(), "SupportScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f",
 				all_scan_modes[k].id, all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance, 1 / all_scan_modes[k].us_per_sample);
 
 		//6.StartMotor
@@ -193,10 +193,10 @@ public:
 		else
 		{
 			//default frequent is 10 hz (by motor pwm value),  acutal_scan_mode.us_per_sample is the number of scan point per us
-			angle_compensate_multiple = int(1000 * 1000 / acutal_scan_mode.us_per_sample / 10.0 / 360.0);//can scan how many points per degree.
-			if (angle_compensate_multiple < 1) angle_compensate_multiple = 1;
-			RCLCPP_INFO(this->get_logger(), "ScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f, AngleCompensate=%d", 
-				acutal_scan_mode.id, acutal_scan_mode.scan_mode, acutal_scan_mode.max_distance, 1 / acutal_scan_mode.us_per_sample, angle_compensate_multiple);
+			npoint_per_degree = int(1000 * 1000 / acutal_scan_mode.us_per_sample / 10.0 / 360.0);//can scan how many points per degree.
+			if (npoint_per_degree < 1) npoint_per_degree = 1;
+			RCLCPP_INFO(this->get_logger(), "CurrentScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f, AngleCompensate=%d", 
+				acutal_scan_mode.id, acutal_scan_mode.scan_mode, acutal_scan_mode.max_distance, 1 / acutal_scan_mode.us_per_sample, npoint_per_degree);
 		}
 
 		//8.SpinROS
@@ -233,15 +233,15 @@ public:
 			//8.4 CompensateScan
 			else
 			{
-				vector<rplidar_response_measurement_node_hq_t> meas_nodes_with_compensation(360 * angle_compensate_multiple);
+				vector<rplidar_response_measurement_node_hq_t> meas_nodes_with_compensation(360 * npoint_per_degree);
 				memset(meas_nodes_with_compensation.data(), 0, meas_nodes_with_compensation.size() * sizeof(meas_nodes_with_compensation[0]));
 
 				for (size_t i = 0, offset = 0; i < meas_count; ++i)
 					if (meas_nodes[i].dist_mm_q2 != 0)
 					{
-						int angle_value = int(getAngle(meas_nodes[i]) * angle_compensate_multiple);
+						int angle_value = int(getAngle(meas_nodes[i]) * npoint_per_degree);
 						if (offset > angle_value) offset = angle_value;
-						for (size_t j = 0; j < angle_compensate_multiple; ++j)
+						for (size_t j = 0; j < npoint_per_degree; ++j)
 						{
 							int angle_compensate_nodes_index = angle_value - offset + j;
 							if (angle_compensate_nodes_index >= meas_nodes_with_compensation.size()) angle_compensate_nodes_index = meas_nodes_with_compensation.size() - 1;
