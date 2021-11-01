@@ -35,6 +35,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <std_srvs/srv/empty.hpp>
+#include <spdlog/spdlog.h>
 #include "rplidar.h"
 
 #include <signal.h>
@@ -76,19 +77,17 @@ public:
 			else RCLCPP_INFO(this->get_logger(), "Done: startScan");
 		});
 
-	string channel_type = this->declare_parameter("channel_type", "serial");
+	string channel_type = this->declare_parameter("channel_type", "serial");//serial/tcp
 	string serial_port = this->declare_parameter("serial_port", "/dev/ttyUSB0");
 	int serial_baudrate = this->declare_parameter("serial_baudrate", 115200/*256000*/);//ros run for A1 A2, change to 256000 if A3
 	string tcp_ip = this->declare_parameter("tcp_ip", "192.168.0.7");
 	int tcp_port = this->declare_parameter("tcp_port", 20108);
 	string frame_id = this->declare_parameter("frame_id", "laser");
-	string scan_mode = this->declare_parameter("scan_mode", "");
+	string scan_mode = this->declare_parameter("scan_mode", "");//Standard/Express/Boost/Sensitivity/Stability
 	bool inverted = this->declare_parameter("inverted", false);
 	bool angle_compensate = this->declare_parameter("angle_compensate", true);
 	float max_distance = 8.0;
 	size_t angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
-	u_result ret;
-	RPlidarDriver* drv;
 
 private:
 	static float getAngle(const rplidar_response_measurement_node_hq_t& node) { return node.angle_z_q14 * 90.f / 16384.f; }
@@ -134,6 +133,7 @@ public:
 	int work_loop()
 	{
 		//1.CreateDriver
+		RPlidarDriver* drv;
 		RCLCPP_INFO(this->get_logger(), "ROS2 SDK Version:" ROS2VERSION ", RPLIDAR SDK Version:" RPLIDAR_SDK_VERSION "");
 		if (channel_type == "tcp") drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_TCP);
 		else drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
@@ -141,81 +141,70 @@ public:
 		else RCLCPP_INFO(this->get_logger(), "Done: create driver");
 
 		//2.ConnectLidar
+		u_result ret;
 		if (channel_type == "tcp") ret = drv->connect(tcp_ip.c_str(), uint32_t(tcp_port));
 		else ret = drv->connect(serial_port.c_str(), uint32_t(serial_baudrate));
-		char connstr[127]; sprintf(connstr, "connect %s with %d", (channel_type == "tcp" ? tcp_ip : serial_port).c_str(), channel_type == "tcp" ? tcp_port : serial_baudrate);
-		if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: %s and ret=%x", connstr, ret); RPlidarDriver::DisposeDriver(drv); return -1; }
-		else RCLCPP_INFO(this->get_logger(), "Done: %s", connstr);
+		string connstr = fmt::format("connect {} with {}", channel_type == "tcp" ? tcp_ip : serial_port, channel_type == "tcp" ? tcp_port : serial_baudrate);
+		if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: %s and ret=%x", connstr.c_str(), ret); RPlidarDriver::DisposeDriver(drv); return -1; }
+		else RCLCPP_INFO(this->get_logger(), "Done: %s", connstr.c_str());
 
-		//3.GetDeviceInfo
+		//3.DeviceInfo
 		rplidar_response_device_info_t device_info;
 		if (IS_FAIL(ret = drv->getDeviceInfo(device_info))) { RCLCPP_ERROR(this->get_logger(), "Failed: getDeviceInfo and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else
 		{
-			string sn_str;
-			for (int pos = 0; pos < 16; ++pos)
-			{
-				char sn[3] = {};
-				sprintf(sn, "%02X", device_info.serialnum[pos]);
-				sn_str += string(sn, sn + 2);
-			}
-			RCLCPP_INFO(this->get_logger(), "RPLidarSN: %s", sn_str);
+			string strsn; for (int k = 0; k < 16; ++k) strsn += fmt::format("{:02X}", device_info.serialnum[k]);
+			RCLCPP_INFO(this->get_logger(), "RPLidarSN: %s", strsn.c_str());
 			RCLCPP_INFO(this->get_logger(), "FirmwareVer: %d.%02d", device_info.firmware_version >> 8, device_info.firmware_version & 0xFF);
 			RCLCPP_INFO(this->get_logger(), "HardwareRev: %d", int(device_info.hardware_version));
 		}
 
-		//4.CheckHealth
+		//4.DeviceHealth
 		rplidar_response_device_health_t device_health;
 		if (IS_FAIL(ret = drv->getHealth(device_health))) { RCLCPP_ERROR(this->get_logger(), "Failed: getHealth and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
-		else RCLCPP_INFO(this->get_logger(), "RPLidarHealthStatus : %d", device_health.status);
+		else RCLCPP_INFO(this->get_logger(), "HealthStatus : %d", device_health.status);
 
-		//5.StartMotor
+		//5.ScanModes
+		vector<RplidarScanMode> all_scan_modes;
+		if (IS_FAIL(drv->getAllSupportedScanModes(all_scan_modes))) { RCLCPP_ERROR(this->get_logger(), "Failed: getAllSupportedScanModes and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
+		else for (int k = 0; k < all_scan_modes.size(); ++k)
+			RCLCPP_ERROR(this->get_logger(), "SupportScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f",
+				all_scan_modes[k].id, all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance, 1 / all_scan_modes[k].us_per_sample);
+
+		//6.StartMotor
 		if (IS_FAIL(ret = drv->startMotor())) { RCLCPP_ERROR(this->get_logger(), "Failed: startMotor"); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else RCLCPP_INFO(this->get_logger(), "Done: startMotor");
 
-		//6.StartScan
+		//7.StartScan
 		RplidarScanMode acutal_scan_mode;
 		if (scan_mode.empty()) ret = drv->startScan(false, true, 0, &acutal_scan_mode);
 		else//Custom mode
 		{
-			vector<RplidarScanMode> all_scan_modes;
-			ret = drv->getAllSupportedScanModes(all_scan_modes);
-			if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: getAllSupportedScanModes and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
+			uint16_t scan_id = -1;
+			for (int k = 0; k < all_scan_modes.size(); ++k) if (all_scan_modes[k].scan_mode == scan_mode) { scan_id = all_scan_modes[k].id; break; }
+			if (scan_id != -1) ret = drv->startScanExpress(false, scan_id, 0, &acutal_scan_mode);
 			else
 			{
-				uint16_t scan_id = -1;
-				for (int k = 0; k < all_scan_modes.size(); ++k) if (all_scan_modes[k].scan_mode == scan_mode) { scan_id = all_scan_modes[k].id; break; }
-				if (scan_id == -1)
-				{
-					RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported, following are supported modes", scan_mode.c_str());
-					for (int k = 0; k < all_scan_modes.size(); ++k)
-						RCLCPP_ERROR(this->get_logger(), "ScanMode: %s(max_distance=%.1fm PointNumber=%.1fK)",
-							all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance,
-							(1000 / all_scan_modes[k].us_per_sample));
-					drv->stopMotor();
-					RPlidarDriver::DisposeDriver(drv);
-					return -1;
-				}
-				else ret = drv->startScanExpress(false, scan_id, 0, &acutal_scan_mode);
+				RCLCPP_ERROR(this->get_logger(), "Failed: scan mode %s is not supported", scan_mode.c_str());
+				drv->stopMotor(); RPlidarDriver::DisposeDriver(drv); return -1;
 			}
 		}
 		if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: startScan/startScanExpress and ret=%x", ret); drv->stopMotor(); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else
 		{
 			//default frequent is 10 hz (by motor pwm value),  acutal_scan_mode.us_per_sample is the number of scan point per us
-			angle_compensate_multiple = int(1000 * 1000 / acutal_scan_mode.us_per_sample / 10.0 / 360.0);
+			angle_compensate_multiple = int(1000 * 1000 / acutal_scan_mode.us_per_sample / 10.0 / 360.0);//can scan how many points per degree.
 			if (angle_compensate_multiple < 1) angle_compensate_multiple = 1;
-			RCLCPP_INFO(this->get_logger(), "ScanMode: %s(max_distance=%.1fm PointNumber=%.1fK AngleCompensate=%d)",
-				acutal_scan_mode.scan_mode, acutal_scan_mode.max_distance,
-				(1000 / acutal_scan_mode.us_per_sample), angle_compensate_multiple);
+			RCLCPP_INFO(this->get_logger(), "ScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f, AngleCompensate=%d", 
+				acutal_scan_mode.id, acutal_scan_mode.scan_mode, acutal_scan_mode.max_distance, 1 / acutal_scan_mode.us_per_sample, angle_compensate_multiple);
 		}
 
-		//7.SpinROS
+		//8.SpinROS
 		while (rclcpp::ok() && !need_exit)
 		{
 			rclcpp::spin_some(shared_from_this());
 
-			//7.1 GrabScan
+			//8.1 GrabScan
 			size_t meas_count = 360 * 8;
 			vector<rplidar_response_measurement_node_hq_t> meas_nodes(meas_count);
 			rclcpp::Time start_scan_time = this->now();
@@ -224,11 +213,11 @@ public:
 			double scan_duration = (end_scan_time - start_scan_time).seconds();
 			if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: grabScanDataHq and ret=%x", ret); continue; }
 
-			//7.2 SortScan
+			//8.2 SortScan
 			ret = drv->ascendScanData(meas_nodes.data(), meas_count);
 			if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: ascendScanData and ret=%x", ret); continue; }
 
-			//7.3 RawScan
+			//8.3 RawScan
 			if (!angle_compensate)
 			{
 				int first_node = -1;
@@ -241,7 +230,7 @@ public:
 				publish_scan(scan_pub, meas_nodes.data() + first_node, final_node - first_node + 1, start_scan_time, scan_duration, inverted, angle_min, angle_max, max_distance, frame_id);
 			}
 
-			//7.4 CompensateScan
+			//8.4 CompensateScan
 			else
 			{
 				vector<rplidar_response_measurement_node_hq_t> meas_nodes_with_compensation(360 * angle_compensate_multiple);
@@ -263,7 +252,7 @@ public:
 			}
 		}
 
-		//8.StopAndClean
+		//9.StopAndClean
 		if (IS_FAIL(ret = drv->stop())) RCLCPP_ERROR(this->get_logger(), "Failed: stopScan and ret=%x", ret);
 		else RCLCPP_INFO(this->get_logger(), "Done: stopScan");
 		if (IS_FAIL(ret = drv->stopMotor())) RCLCPP_ERROR(this->get_logger(), "Failed: stopMotor and ret=%x", ret);
