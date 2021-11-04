@@ -24,9 +24,7 @@ public:
 	string frame_id = this->declare_parameter("frame_id", "laser");
 	string scan_mode = this->declare_parameter("scan_mode", "");//Standard/Express/Boost/Sensitivity/Stability
 	bool inverted = this->declare_parameter("inverted", false);
-	bool angle_compensate = this->declare_parameter("angle_compensate", true);
-	float max_distance = 8.0;
-	size_t npoint_per_degree = 1;//it stand of angle compensate at per 1 degree
+	bool angle_compensate = this->declare_parameter("angle_compensate", true);//使扫描点均匀地分布在360度范围, 步长通常设为1度, RPLidar角分辨最小0.45度最大1.35度典型0.9度, 所以可设置每个步长内分布1或2个扫描点
 	int log_detail = this->declare_parameter("log_detail", 0); //1:RawScan   2:FormatScan   3:BothScan
 
 public:
@@ -69,6 +67,7 @@ private:
 
 		//2.
 		bool reversed = (angle_max > angle_min);
+		if (!reversed) RCLCPP_INFO(this->get_logger(), "\n\n\nWarn: this should never happen\n\n\n");
 		scan_msg->angle_min = M_PI - (reversed ? angle_max : angle_min);
 		scan_msg->angle_max = M_PI - (reversed ? angle_min : angle_max);
 		scan_msg->angle_increment = (scan_msg->angle_max - scan_msg->angle_min) / (node_count - 1);
@@ -126,14 +125,15 @@ public:
 		vector<RplidarScanMode> all_scan_modes;
 		if (IS_FAIL(drv->getAllSupportedScanModes(all_scan_modes))) { RCLCPP_ERROR(this->get_logger(), "Failed: getAllSupportedScanModes and ret=%x", ret); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else for (int k = 0; k < all_scan_modes.size(); ++k)
-			RCLCPP_INFO(this->get_logger(), "SupportScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f",
-				all_scan_modes[k].id, all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance, 1 / all_scan_modes[k].us_per_sample);
+			RCLCPP_INFO(this->get_logger(), "SupportScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f, PointPerDegreee=%d",//can scan how many points per degree//10HZ//360deg
+				all_scan_modes[k].id, all_scan_modes[k].scan_mode, all_scan_modes[k].max_distance, 1 / all_scan_modes[k].us_per_sample, int(1000 * 1000 / all_scan_modes[k].us_per_sample / 10.0 / 360.0));
 
 		//6.StartMotor
 		if (IS_FAIL(ret = drv->startMotor())) { RCLCPP_ERROR(this->get_logger(), "Failed: startMotor"); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else RCLCPP_INFO(this->get_logger(), "Done: startMotor");
 
 		//7.StartScan
+		size_t npoint_per_degree;
 		RplidarScanMode acutal_scan_mode;
 		if (scan_mode.empty()) ret = drv->startScan(false, true, 0, &acutal_scan_mode);
 		else//Custom mode
@@ -150,7 +150,7 @@ public:
 		if (IS_FAIL(ret)) { RCLCPP_ERROR(this->get_logger(), "Failed: startScan/startScanExpress and ret=%x", ret); drv->stopMotor(); RPlidarDriver::DisposeDriver(drv); return -1; }
 		else
 		{
-			npoint_per_degree = int(1000 * 1000 / acutal_scan_mode.us_per_sample / 10.0 / 360.0);//can scan how many points per degree//10HZ//360deg//
+			npoint_per_degree = int(1000 * 1000 / acutal_scan_mode.us_per_sample / 10.0 / 360.0);
 			if (npoint_per_degree < 1) npoint_per_degree = 1;
 			RCLCPP_INFO(this->get_logger(), "CurrentScanMode%d: name=%s, MaxDistance=%.1fm, SamplePerUS=%.1f, PointPerDegreee=%d", 
 				acutal_scan_mode.id, acutal_scan_mode.scan_mode, acutal_scan_mode.max_distance, 1 / acutal_scan_mode.us_per_sample, npoint_per_degree);
@@ -180,11 +180,11 @@ public:
 				int final_node = meas_count;
 				while (meas_nodes[++first_node].dist_mm_q2 == 0);//First valid node
 				while (meas_nodes[--final_node].dist_mm_q2 == 0);//Final valid node
-				float angle_min = get_angle_deg(meas_nodes[first_node]) * M_PI / 180;
-				float angle_max = get_angle_deg(meas_nodes[final_node]) * M_PI / 180;
-				publish_scan(scan_pub, meas_nodes.data() + first_node, final_node - first_node + 1, scan_timestamp, frame_id, scan_duration, inverted, angle_min, angle_max, max_distance);
-				string scan_detail = fmt::format("RawScan{}: AngleMin={}, AngleMax={}, NodeCount={}", frameId, angle_min, angle_max, final_node - first_node + 1);
-				if (log_detail & 1) for (int k = first_node; k < final_node; ++k) scan_detail += fmt::format("\n\tNode{}: [ {}, {} ]", get_angle_deg(meas_nodes[k]), meas_nodes[k].dist_mm_q2 * 0.00025);
+				float angle_min = get_angle_deg(meas_nodes[first_node]) * M_PI / 180; //rad
+				float angle_max = get_angle_deg(meas_nodes[final_node]) * M_PI / 180; //rad
+				publish_scan(scan_pub, meas_nodes.data() + first_node, final_node - first_node + 1, scan_timestamp, frame_id, scan_duration, inverted, angle_min, angle_max, acutal_scan_mode.max_distance);
+				string scan_detail = fmt::format("RawScan{}: AngleMin={}, AngleMax={}, PointCount={}", frameId, angle_min, angle_max, final_node - first_node + 1);
+				if (log_detail & 1) for (int k = first_node; k < final_node; ++k) scan_detail += fmt::format("\n\tPoint{}: [ {}, {} ]", k, get_angle_deg(meas_nodes[k]), meas_nodes[k].dist_mm_q2 * 0.00025);
 				if (long(time(0)) % 2 == 0) RCLCPP_INFO(this->get_logger(), "%s", scan_detail.c_str());
 			}
 
@@ -206,9 +206,9 @@ public:
 							formated_meas_nodes[index2offset] = meas_nodes[i];
 						}
 					}
-				publish_scan(scan_pub, formated_meas_nodes.data(), formated_meas_nodes.size(), scan_timestamp, frame_id, scan_duration, inverted, 0.f, 359.f, max_distance);
-				string scan_detail = fmt::format("FormatScan{}: PointPerDegree={}, NodeCount={}", frameId, npoint_per_degree, formated_meas_nodes.size());
-				if (log_detail & 2) for (int k = 0; k < formated_meas_nodes.size(); ++k) scan_detail += fmt::format("\n\tNode{}: [ {}, {} ]", get_angle_deg(formated_meas_nodes[k]), formated_meas_nodes[k].dist_mm_q2 * 0.00025);
+				publish_scan(scan_pub, formated_meas_nodes.data(), formated_meas_nodes.size(), scan_timestamp, frame_id, scan_duration, inverted, 0.f, 359.f, acutal_scan_mode.max_distance);
+				string scan_detail = fmt::format("FormatScan{}: PointPerDegree={}, PointCount={}", frameId, npoint_per_degree, formated_meas_nodes.size());
+				if (log_detail & 2) for (int k = 0; k < formated_meas_nodes.size(); ++k) scan_detail += fmt::format("\n\tPoint{}: [ {}, {} ]", k, get_angle_deg(formated_meas_nodes[k]), formated_meas_nodes[k].dist_mm_q2 * 0.00025);
 				if (long(time(0)) % 2 == 0) RCLCPP_INFO(this->get_logger(), "%s", scan_detail.c_str());
 			}
 		}
