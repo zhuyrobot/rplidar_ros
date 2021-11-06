@@ -67,7 +67,7 @@ private:
 
 		//2.
 		bool reversed = (angle_max > angle_min);
-		if (!reversed) RCLCPP_INFO(this->get_logger(), "\n\n\nWarn: this should never happen\n\n\n");
+		if (!reversed) RCLCPP_INFO(this->get_logger(), "Warn: line%d should never happen", __LINE__);
 		scan_msg->angle_min = M_PI - (reversed ? angle_max : angle_min);
 		scan_msg->angle_max = M_PI - (reversed ? angle_min : angle_max);
 		scan_msg->angle_increment = (scan_msg->angle_max - scan_msg->angle_min) / (node_count - 1);
@@ -198,15 +198,15 @@ public:
 					if (meas_nodes[i].dist_mm_q2 != 0) //has been zero defaultly if zero distance
 					{
 						int angle2index = int(get_angle_deg(meas_nodes[i]) * npoint_per_degree);
-						if (offset > angle2index) { offset = angle2index; RCLCPP_WARN(this->get_logger(), "\n\n\nWarn: this should not happen\n\n\n"); }
+						if (offset > angle2index) { offset = angle2index; RCLCPP_WARN(this->get_logger(), "Warn: line%d should not happen", __LINE__); }
 						for (size_t k = 0; k < npoint_per_degree; ++k)
 						{
 							int index2offset = angle2index - offset + k;
-							if (index2offset >= formated_meas_nodes.size()) { index2offset = formated_meas_nodes.size() - 1; RCLCPP_WARN(this->get_logger(), "\n\n\nWarn: this should not happen often\n\n\n"); }
+							if (index2offset >= formated_meas_nodes.size()) { index2offset = formated_meas_nodes.size() - 1; RCLCPP_WARN(this->get_logger(), "Warn: line%d should not happen often", __LINE__); }
 							formated_meas_nodes[index2offset] = meas_nodes[i];
 						}
 					}
-				publish_scan(scan_pub, formated_meas_nodes.data(), formated_meas_nodes.size(), scan_timestamp, frame_id, scan_duration, inverted, 0.f, 359.f, acutal_scan_mode.max_distance);
+				publish_scan(scan_pub, formated_meas_nodes.data(), formated_meas_nodes.size(), scan_timestamp, frame_id, scan_duration, inverted, 0.f, float(359.f * M_PI / 180), acutal_scan_mode.max_distance);
 				string scan_detail = fmt::format("FormatScan{}: PointPerDegree={}, PointCount={}", frameId, npoint_per_degree, formated_meas_nodes.size());
 				if (log_detail & 2) for (int k = 0; k < formated_meas_nodes.size(); ++k) scan_detail += fmt::format("\n\tPoint{}: [ {}, {} ]", k, get_angle_deg(formated_meas_nodes[k]), formated_meas_nodes[k].dist_mm_q2 * 0.00025);
 				if (long(time(0)) % 2 == 0) RCLCPP_INFO(this->get_logger(), "%s", scan_detail.c_str());
